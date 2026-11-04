@@ -56,6 +56,7 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
     private BukkitTask configSaveTask;
     private boolean configDirty;
     private NamespacedKey wandKey;
+    private NamespacedKey wandIdKey;
     private final Map<UUID, RegionSelection> selections = new HashMap<>();
     private final Set<UUID> eliminatedPlayers = new HashSet<>();
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
@@ -65,6 +66,7 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
         ensureConfig(); loadMessages();
         loadEliminatedPlayers();
         wandKey = new NamespacedKey(this, "region_wand");
+        wandIdKey = new NamespacedKey(this, "wand_id");
         PluginCommand command = getCommand("toxiczone");
         if (command != null) { command.setExecutor(this); command.setTabCompleter(this); }
         Bukkit.getPluginManager().registerEvents(this, this);
@@ -271,6 +273,10 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
         meta.setDisplayName(ChatColor.translateAlternateColorCodes('&', messages.getString("wand-name", "區域選取釣竿")));
         meta.setLore(List.of(ChatColor.translateAlternateColorCodes('&', messages.getString("wand-lore", "左鍵選第一角，右鍵選第二角。"))));
         meta.getPersistentDataContainer().set(wandKey, PersistentDataType.BYTE, (byte) 1);
+        meta.getPersistentDataContainer().set(wandIdKey, PersistentDataType.INTEGER, 1001);
+        var customModelData = meta.getCustomModelDataComponent();
+        customModelData.setStrings(List.of("1001"));
+        meta.setCustomModelDataComponent(customModelData);
         item.setItemMeta(meta);
         Map<Integer, ItemStack> overflow = player.getInventory().addItem(item);
         overflow.values().forEach(leftover -> player.getWorld().dropItemNaturally(player.getLocation(), leftover));
@@ -278,9 +284,10 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
     }
 
     @EventHandler public void onWandUse(PlayerInteractEvent event) {
-        if (event.getHand() != EquipmentSlot.HAND || event.getItem() == null || wandKey == null) return;
+        if (event.getHand() != EquipmentSlot.HAND || event.getItem() == null || wandKey == null || wandIdKey == null) return;
         ItemMeta meta = event.getItem().getItemMeta();
-        if (meta == null || !meta.getPersistentDataContainer().has(wandKey, PersistentDataType.BYTE)) return;
+        if (meta == null || !meta.getPersistentDataContainer().has(wandKey, PersistentDataType.BYTE)
+                || meta.getPersistentDataContainer().getOrDefault(wandIdKey, PersistentDataType.INTEGER, 0) != 1001) return;
         Action action = event.getAction();
         Player player = event.getPlayer();
         if (action == Action.RIGHT_CLICK_AIR) { event.setCancelled(true); return; }

@@ -1,0 +1,17 @@
+name: AuroraToxicZone
+version: 1.0.0
+main: tw.aurora.toxiczone.ToxicZonePlugin
+api-version: '1.21'
+description: 隨時間縮小的安全區與毒圈
+commands:
+  toxiczone:
+    description: 設定與管理毒圈
+    usage: /toxiczone help
+    aliases: [tz]
+permissions:
+  auroratoxiczone.admin:
+    description: 管理毒圈設定
+    default: op
+  auroratoxiczone.version:
+    description: 檢查插件版本
+    default: op
