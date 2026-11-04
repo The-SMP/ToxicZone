@@ -2,6 +2,7 @@ name: AuroraToxicZone
 version: 1.0.0
 main: tw.aurora.toxiczone.ToxicZonePlugin
 api-version: '1.21'
+softdepend: [HttpHub]
 description: 隨時間縮小的安全區與毒圈
 commands:
   toxiczone:

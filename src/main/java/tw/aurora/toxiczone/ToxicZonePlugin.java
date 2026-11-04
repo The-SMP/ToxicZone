@@ -57,6 +57,7 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
     private boolean configDirty;
     private NamespacedKey wandKey;
     private NamespacedKey wandIdKey;
+    private ToxicZoneResourcePack resourcePack;
     private final Map<UUID, RegionSelection> selections = new HashMap<>();
     private final Set<UUID> eliminatedPlayers = new HashSet<>();
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
@@ -67,6 +68,14 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
         loadEliminatedPlayers();
         wandKey = new NamespacedKey(this, "region_wand");
         wandIdKey = new NamespacedKey(this, "wand_id");
+        saveResource("resource-pack.zip", false);
+        org.bukkit.plugin.Plugin httpHub = Bukkit.getPluginManager().getPlugin("HttpHub");
+        if (httpHub != null && httpHub.isEnabled()) {
+            resourcePack = new ToxicZoneResourcePack(this);
+            resourcePack.start();
+        } else {
+            getLogger().severe("未安裝或未啟用 HttpHub；伺服器資源包不會提供或強制套用。");
+        }
         PluginCommand command = getCommand("toxiczone");
         if (command != null) { command.setExecutor(this); command.setTabCompleter(this); }
         Bukkit.getPluginManager().registerEvents(this, this);
@@ -77,7 +86,7 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
         checkGitHubAsync(result -> { if (result == null) getLogger().info("GitHub 版本檢查未取得可用的 Release 資訊。"); else getLogger().info("GitHub 最新版本：" + result + (isNewer(getDescription().getVersion(), result) ? "（目前版本為開發版）" : "")); });
     }
 
-    @Override public void onDisable() { if (tickTask != null) tickTask.cancel(); if (particleTask != null) particleTask.cancel(); if (configSaveTask != null) configSaveTask.cancel(); if (configDirty) saveConfig(); selections.clear(); eliminatedPlayers.clear(); }
+    @Override public void onDisable() { if (tickTask != null) tickTask.cancel(); if (particleTask != null) particleTask.cancel(); if (configSaveTask != null) configSaveTask.cancel(); if (configDirty) saveConfig(); if (resourcePack != null) resourcePack.stop(); selections.clear(); eliminatedPlayers.clear(); }
 
     private record BlockPoint(UUID worldId, String worldName, int x, int y, int z) {}
     private static final class RegionSelection { private BlockPoint first; private BlockPoint second; }
@@ -439,7 +448,7 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
             viewer.spawnParticle(Particle.DUST,x,y,z,1,0,0,0,0,dust,true);
         }
     }
-    @EventHandler public void onJoin(PlayerJoinEvent event){Player player=event.getPlayer();if(!player.hasPermission("auroratoxiczone.version"))return;
+    @EventHandler public void onJoin(PlayerJoinEvent event){Player player=event.getPlayer();if(resourcePack!=null)Bukkit.getScheduler().runTaskLater(this,()->{if(player.isOnline())resourcePack.send(player);},20L);if(!player.hasPermission("auroratoxiczone.version"))return;
         Bukkit.getScheduler().runTaskLater(this,()->checkGitHubAsync(latest->{if(latest==null||!isNewer(latest,getDescription().getVersion()))return;Bukkit.getScheduler().runTask(this,()->{if(player.isOnline()&&player.hasPermission("auroratoxiczone.version"))send(player,"update-available",Map.of("latest",latest,"current",getDescription().getVersion()));});}),20L*Math.max(0,getConfig().getInt("settings.reminder-delay-seconds",3)));
     }
     private void checkGitHubAsync(java.util.function.Consumer<String> callback){String repo=getConfig().getString("settings.github-repository","").trim();if(repo.isEmpty()){callback.accept(null);return;}if(!repo.matches("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")){getLogger().warning("settings.github-repository 格式無效，請使用 owner/repository。");callback.accept(null);return;}if(cacheValid&&System.currentTimeMillis()-cachedAt<600000){callback.accept(cachedLatest);return;}CompletableFuture<String> active=fetchInFlight;if(active!=null){active.thenAccept(callback);return;}
