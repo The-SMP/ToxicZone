@@ -5,11 +5,8 @@ Paper 毒圈插件，支援 Minecraft 1.21.11 至 26.3。
 ## 安裝
 
 1. 將 `ToxicZone.jar` 放進伺服器的 `plugins` 資料夾。
-2. 安裝並啟用 [HttpHub](https://github.com/clre20/HttpHub)。
-3. 在防火牆開放 HttpHub 設定中的 TCP 連接埠（預設為 `52010`）。
-4. 啟動伺服器。插件會建立設定檔，並透過 HttpHub 發送資源包；玩家必須接受才能加入。
-
-資源包位於 `plugins/ToxicZone/resource-pack.zip`。可將其他資源包內容合併進去；更新時保留 ZIP 根目錄的 `pack.mcmeta`，再重啟伺服器。相同路徑的檔案需先手動合併，不能同時保留兩份。
+2. 啟動伺服器，插件會建立 `config.yml` 和 `messages.yml`。
+3. 使用遊戲內指令或設定檔調整毒圈。
 
 Paper 26.1 以上版本需要 Java 25 執行。
 
