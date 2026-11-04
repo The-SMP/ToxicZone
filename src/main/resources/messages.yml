@@ -5,6 +5,7 @@ help: |-
   &b&l毒圈管理 &8| &7指令列表
   &8&m--------------------------------
   &f/tz &8- &7開啟箱子控制面板
+  &f/tz arena <create|use|list> &8- &7建立、切換或列出場地
   &e區域設定
   &f/tz status &8- &7查看目前狀態
   &f/tz center [世界 x z] &8- &7設定中心位置
@@ -49,7 +50,7 @@ selection-second: "&a第二角已設定：{world} ({x}, {y}, {z})。"
 selection-first-needed: "&c請先左鍵方塊設定第一角，再右鍵設定第二角。"
 selection-world-error: "&c兩個選取點必須位於同一個世界，請重新選取。"
 selection-complete: "&a區域已設定：中心 {x}, {z}，起始半徑 {radius} 格。高度座標不影響水平毒圈大小。"
-gui-title: "&8毒圈控制面板"
+gui-title: "&8毒圈控制面板：{arena}"
 gui-filler.name: "&0 "
 gui-status.name: "&b&l目前狀態"
 gui-status.lore:
@@ -108,3 +109,9 @@ gui-stop.lore:
 gui-reload.name: "&e重新載入設定"
 gui-reload.lore:
   - "&7左鍵重新載入設定與訊息。"
+
+arena-list: "&a場地：{arenas}"
+arena-selected: "&a目前設定的場地：{arena}"
+arena-usage: "&e用法：/tz arena list、/tz arena create <名稱> 或 /tz arena use <名稱>。名稱使用小寫英數、底線或減號。"
+arena-running: "&e請先停止縮圈，再變更此場地的範圍或時間。"
+arena-overlap: "&c此場地與正在縮圈的 {arena} 重疊，無法開始。"

@@ -46,8 +46,10 @@ import java.util.regex.Pattern;
 
 public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor, TabCompleter, Listener {
     private YamlConfiguration messages;
-    private long startedAt;
-    private long lastDamageAt;
+    private String activeArena = "default";
+    private final Map<String, Long> lastDamageAt = new HashMap<>();
+    private final Map<UUID, String> selectedArenas = new HashMap<>();
+    private String consoleArena = "default";
     private volatile long cachedAt;
     private volatile String cachedLatest;
     private volatile boolean cacheValid;
@@ -60,13 +62,12 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
     private NamespacedKey wandIdKey;
     private ToxicZoneResourcePack resourcePack;
     private final Map<UUID, RegionSelection> selections = new HashMap<>();
-    private final Set<UUID> eliminatedPlayers = new HashSet<>();
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
     private static final Pattern VERSION = Pattern.compile("[vV]?(\\d+)\\.(\\d+)\\.(\\d+)");
 
     @Override public void onEnable() {
         ensureConfig(); loadMessages();
-        loadEliminatedPlayers();
+        forEachArena(this::recoverLegacyRound);
         wandKey = new NamespacedKey(this, "region_wand");
         wandIdKey = new NamespacedKey(this, "wand_id");
         saveResource("resource-pack.zip", false);
@@ -80,14 +81,13 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
         PluginCommand command = getCommand("toxiczone");
         if (command != null) { command.setExecutor(this); command.setTabCompleter(this); }
         Bukkit.getPluginManager().registerEvents(this, this);
-        if (getConfig().getBoolean("arena.running", false)) startedAt = System.currentTimeMillis();
-        tickTask = Bukkit.getScheduler().runTaskTimer(this, this::tickZone, 20L, 20L);
+        tickTask = Bukkit.getScheduler().runTaskTimer(this, () -> forEachArena(this::tickZone), 20L, 20L);
         long particleInterval = Math.max(2L, getConfig().getLong("settings.particles.interval-ticks", 10L));
-        particleTask = Bukkit.getScheduler().runTaskTimer(this, this::renderBoundary, particleInterval, particleInterval);
+        particleTask = Bukkit.getScheduler().runTaskTimer(this, () -> forEachArena(this::renderBoundary), particleInterval, particleInterval);
         checkGitHubAsync(result -> { if (result == null) getLogger().info("GitHub 版本檢查未取得可用的 Release 資訊。"); else getLogger().info("GitHub 最新版本：" + result + (isNewer(getDescription().getVersion(), result) ? "（目前版本為開發版）" : "")); });
     }
 
-    @Override public void onDisable() { if (tickTask != null) tickTask.cancel(); if (particleTask != null) particleTask.cancel(); if (configSaveTask != null) configSaveTask.cancel(); if (configDirty) saveConfig(); if (resourcePack != null) resourcePack.stop(); selections.clear(); eliminatedPlayers.clear(); }
+    @Override public void onDisable() { if (tickTask != null) tickTask.cancel(); if (particleTask != null) particleTask.cancel(); if (configSaveTask != null) configSaveTask.cancel(); if (configDirty) saveConfig(); if (resourcePack != null) resourcePack.stop(); selections.clear(); selectedArenas.clear(); lastDamageAt.clear(); }
 
     private record BlockPoint(UUID worldId, String worldName, int x, int y, int z) {}
     private static final class RegionSelection { private BlockPoint first; private BlockPoint second; }
@@ -101,13 +101,98 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
         }, 40L);
     }
 
-    private void loadEliminatedPlayers() {
-        eliminatedPlayers.clear();
-        if (!getConfig().getBoolean("arena.running", false)) return;
-        for (String value : getConfig().getStringList("arena.eliminated-players")) {
-            try { eliminatedPlayers.add(UUID.fromString(value)); }
-            catch (IllegalArgumentException ignored) { getLogger().warning("忽略無效的淘汰玩家 UUID 設定值。"); }
+    private String arenaKey(String key) {
+        return (activeArena.equals("default") ? "arena." : "arenas." + activeArena + ".") + key;
+    }
+
+    private String damageKey(String key) {
+        return activeArena.equals("default") ? "settings." + key : arenaKey(key);
+    }
+
+    private List<String> arenaNames() {
+        List<String> names = new ArrayList<>();
+        names.add("default");
+        var section = getConfig().getConfigurationSection("arenas");
+        if (section != null) {
+            for (String name : section.getKeys(false)) {
+                if (name.matches("[a-z0-9_-]{1,32}") && !name.equals("default")
+                        && section.isConfigurationSection(name)) names.add(name);
+            }
         }
+        return names;
+    }
+
+    private String selectedArena(CommandSender sender) {
+        String name = sender instanceof Player player
+                ? selectedArenas.getOrDefault(player.getUniqueId(), "default") : consoleArena;
+        return arenaNames().contains(name) ? name : "default";
+    }
+
+    private void inArena(String name, Runnable action) {
+        String previous = activeArena;
+        activeArena = name;
+        try {
+            action.run();
+        } finally {
+            activeArena = previous;
+        }
+    }
+
+    private void forEachArena(Runnable action) {
+        for (String name : arenaNames()) inArena(name, action);
+    }
+
+    private long elapsedMillis(long now) {
+        return Math.max(0, now - getConfig().getLong(arenaKey("started-at"), now));
+    }
+
+    private void recoverLegacyRound() {
+        if (getConfig().getBoolean(arenaKey("running")) && getConfig().getLong(arenaKey("started-at")) <= 0) {
+            getConfig().set(arenaKey("running"), false);
+            saveConfig();
+        }
+    }
+
+    private void manageArena(CommandSender sender, String[] args) {
+        if (args.length == 2 && args[1].equalsIgnoreCase("list")) {
+            send(sender, "arena-list", Map.of("arenas", String.join(", ", arenaNames())));
+            return;
+        }
+        if (args.length != 3 || !args[2].matches("[a-z0-9_-]{1,32}")) {
+            send(sender, "arena-usage");
+            return;
+        }
+        String name = args[2];
+        boolean exists = arenaNames().contains(name);
+        if (args[1].equalsIgnoreCase("create") && !exists) {
+            var defaults = getConfig().getDefaults().getConfigurationSection("arena");
+            var arena = getConfig().createSection("arenas." + name);
+            for (String key : defaults.getKeys(true)) {
+                if (!defaults.isConfigurationSection(key)) arena.set(key, defaults.get(key));
+            }
+            if (sender instanceof Player player) {
+                Location location = player.getLocation();
+                arena.set("world", location.getWorld().getName());
+                arena.set("center-x", location.getX());
+                arena.set("center-z", location.getZ());
+            }
+            arena.set("damage", getConfig().getDouble("settings.damage"));
+            arena.set("damage-interval-seconds", getConfig().getDouble("settings.damage-interval-seconds"));
+            saveConfig();
+        } else if (!args[1].equalsIgnoreCase("use") || !exists) {
+            send(sender, "arena-usage");
+            return;
+        }
+        if (sender instanceof Player player) {
+            selectedArenas.put(player.getUniqueId(), name);
+            selections.remove(player.getUniqueId());
+            if (player.getOpenInventory().getTopInventory().getHolder() instanceof ToxicZoneMenuHolder) {
+                player.closeInventory();
+            }
+        } else {
+            consoleArena = name;
+        }
+        send(sender, "arena-selected", Map.of("arena", name));
     }
 
     private void ensureConfig() {
@@ -131,6 +216,10 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
         for (String key : defaults.getKeys(true)) if (!defaults.isConfigurationSection(key) && !messages.contains(key)) { messages.set(key, defaults.get(key)); changed = true; }
         String previousHelp = "&e/toxiczone help | status | start | stop | center [世界 x z] | radius <起始半徑> [最小半徑] | time <秒數> | damage <傷害值> [間隔秒數]";
         String earlierHelp = String.join("\n", "&b&l毒圈指令", "&f/tz status &8- &7查看目前狀態", "&f/tz center [世界 x z] &8- &7設定中心位置", "&f/tz radius <起始半徑> [最小半徑] &8- &7設定安全區大小", "&f/tz time <秒數> &8- &7設定縮圈時間", "&f/tz damage <傷害> [間隔秒數] &8- &7設定毒圈傷害", "&f/tz start / stop &8- &7開始或停止縮圈", "&f/tz reload &8- &7重新載入設定", "&f/tz version &8- &7檢查插件版本");
+        if ("&8毒圈控制面板".equals(messages.getString("gui-title"))) {
+            messages.set("gui-title", defaults.getString("gui-title"));
+            changed = true;
+        }
         String currentHelp = messages.getString("help");
         String previousWandHelp = defaults.getString("help", "").replace("區域選取釣竿", "區域選取木棍");
         if (previousHelp.equals(currentHelp) || earlierHelp.equals(currentHelp) || previousWandHelp.equals(currentHelp)) { messages.set("help", defaults.getString("help")); changed = true; }
@@ -155,6 +244,15 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
 
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!admin(sender)) return true;
+        if (args.length > 0 && args[0].equalsIgnoreCase("arena")) {
+            manageArena(sender, args);
+            return true;
+        }
+        inArena(selectedArena(sender), () -> handleArenaCommand(sender, args));
+        return true;
+    }
+
+    private boolean handleArenaCommand(CommandSender sender, String[] args) {
         if (args.length == 0) {
             if (sender instanceof Player player) openMenu(player); else send(sender,"only-player");
             return true;
@@ -162,10 +260,17 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
         if (args[0].equalsIgnoreCase("help")) { send(sender,"help"); return true; }
         String sub = args[0].toLowerCase(Locale.ROOT);
         if (sub.equals("version")) { if (!versionPerm(sender)) return true; checkGitHubAsync(latest -> Bukkit.getScheduler().runTask(this, () -> tellVersion(sender, latest))); return true; }
+        if (getConfig().getBoolean(arenaKey("running"))
+                && Set.of("start", "center", "radius", "time").contains(sub)) {
+            send(sender, "arena-running");
+            return true;
+        }
         switch (sub) {
             case "status" -> {
-                double radius = currentRadius(); long remain = Math.max(0, getConfig().getLong("arena.shrink-duration-seconds") - (System.currentTimeMillis()-startedAt)/1000);
-                send(sender,"status",Map.of("world",getConfig().getString("arena.world","world"),"x",getConfig().getDouble("arena.center-x"),"z",getConfig().getDouble("arena.center-z"),"radius",String.format(Locale.ROOT,"%.1f",radius),"minimum",getConfig().getDouble("arena.minimum-radius"),"remaining",remain,"state",messages.getString(getConfig().getBoolean("arena.running")?"state-running":"state-stopped")));
+                double radius = currentRadius();
+                long remain = getConfig().getBoolean(arenaKey("running"))
+                        ? Math.max(0, getConfig().getLong(arenaKey("shrink-duration-seconds")) - elapsedMillis(System.currentTimeMillis()) / 1000) : 0;
+                send(sender,"status",Map.of("world",getConfig().getString(arenaKey("world"),"world"),"x",getConfig().getDouble(arenaKey("center-x")),"z",getConfig().getDouble(arenaKey("center-z")),"radius",String.format(Locale.ROOT,"%.1f",radius),"minimum",getConfig().getDouble(arenaKey("minimum-radius")),"remaining",remain,"state",messages.getString(getConfig().getBoolean(arenaKey("running"))?"state-running":"state-stopped")));
             }
             case "start" -> startZone(sender);
             case "stop" -> stopZone(sender);
@@ -174,7 +279,7 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
             case "radius" -> setRadius(sender,args);
             case "time" -> setTime(sender,args);
             case "damage" -> setDamage(sender,args);
-            case "reload" -> { if (configDirty) { if (configSaveTask != null) configSaveTask.cancel(); saveConfig(); configDirty=false; configSaveTask=null; } ensureConfig(); loadMessages(); send(sender,"reload"); }
+            case "reload" -> { if (configDirty) { if (configSaveTask != null) configSaveTask.cancel(); saveConfig(); configDirty=false; configSaveTask=null; } ensureConfig(); forEachArena(this::recoverLegacyRound); loadMessages(); send(sender,"reload"); }
             default -> send(sender,"help");
         }
         return true;
@@ -187,42 +292,58 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
             else { send(s,"center-usage"); return; }
         } catch(Exception e){send(s,"center-usage");return;}
         if (!Double.isFinite(x) || !Double.isFinite(z)) { send(s,"center-usage"); return; }
-        getConfig().set("arena.world",world);getConfig().set("arena.center-x",x);getConfig().set("arena.center-z",z);getConfig().set("arena.selection-boundary.enabled",false);markConfigDirty();
+        getConfig().set(arenaKey("world"),world);getConfig().set(arenaKey("center-x"),x);getConfig().set(arenaKey("center-z"),z);getConfig().set(arenaKey("selection-boundary.enabled"),false);markConfigDirty();
         send(s,"center-set",Map.of("world",world,"x",x,"z",z));
     }
-    private void setRadius(CommandSender s,String[] a){try{if(a.length<2||a.length>3)throw new Exception();double r=Double.parseDouble(a[1]),m=a.length==3?Double.parseDouble(a[2]):getConfig().getDouble("arena.minimum-radius");if(!Double.isFinite(r)||!Double.isFinite(m)||r<=0||m<=0||m>r)throw new Exception();getConfig().set("arena.start-radius",r);getConfig().set("arena.minimum-radius",m);markConfigDirty();send(s,"radius-set",Map.of("radius",r,"minimum",m));}catch(Exception e){send(s,"radius-usage");}}
-    private void setTime(CommandSender s,String[] a){try{long n=Long.parseLong(a[1]);if(a.length!=2||n<1)throw new Exception();getConfig().set("arena.shrink-duration-seconds",n);markConfigDirty();send(s,"time-set",Map.of("seconds",n));}catch(Exception e){send(s,"time-usage");}}
-    private void setDamage(CommandSender s,String[] a){try{double d=Double.parseDouble(a[1]),i=a.length==3?Double.parseDouble(a[2]):getConfig().getDouble("settings.damage-interval-seconds");if(a.length<2||a.length>3||!Double.isFinite(d)||!Double.isFinite(i)||d<=0||i<0.1)throw new Exception();getConfig().set("settings.damage",d);getConfig().set("settings.damage-interval-seconds",i);markConfigDirty();send(s,"damage-set",Map.of("damage",d,"interval",i,"hearts",d/2));}catch(Exception e){send(s,"damage-usage");}}
+    private void setRadius(CommandSender s,String[] a){try{if(a.length<2||a.length>3)throw new Exception();double r=Double.parseDouble(a[1]),m=a.length==3?Double.parseDouble(a[2]):getConfig().getDouble(arenaKey("minimum-radius"));if(!Double.isFinite(r)||!Double.isFinite(m)||r<=0||m<=0||m>r)throw new Exception();getConfig().set(arenaKey("start-radius"),r);getConfig().set(arenaKey("minimum-radius"),m);markConfigDirty();send(s,"radius-set",Map.of("radius",r,"minimum",m));}catch(Exception e){send(s,"radius-usage");}}
+    private void setTime(CommandSender s,String[] a){try{long n=Long.parseLong(a[1]);if(a.length!=2||n<1)throw new Exception();getConfig().set(arenaKey("shrink-duration-seconds"),n);markConfigDirty();send(s,"time-set",Map.of("seconds",n));}catch(Exception e){send(s,"time-usage");}}
+    private void setDamage(CommandSender s,String[] a){try{double d=Double.parseDouble(a[1]),i=a.length==3?Double.parseDouble(a[2]):getConfig().getDouble(damageKey("damage-interval-seconds"));if(a.length<2||a.length>3||!Double.isFinite(d)||!Double.isFinite(i)||d<=0||i<0.1)throw new Exception();getConfig().set(damageKey("damage"),d);getConfig().set(damageKey("damage-interval-seconds"),i);markConfigDirty();send(s,"damage-set",Map.of("damage",d,"interval",i,"hearts",d/2));}catch(Exception e){send(s,"damage-usage");}}
 
     private void startZone(CommandSender sender) {
-        eliminatedPlayers.clear(); getConfig().set("arena.eliminated-players",List.of());
-        if(!getConfig().getBoolean("arena.selection-boundary.enabled")){
-            double x=getConfig().getDouble("arena.center-x"),z=getConfig().getDouble("arena.center-z"),radius=getConfig().getDouble("arena.start-radius");
+        if(!getConfig().getBoolean(arenaKey("selection-boundary.enabled"))){
+            double x=getConfig().getDouble(arenaKey("center-x")),z=getConfig().getDouble(arenaKey("center-z")),radius=getConfig().getDouble(arenaKey("start-radius"));
             saveSelectionBoundary(x-radius,x+radius,z-radius,z+radius);
         }
-        startedAt=System.currentTimeMillis(); lastDamageAt=0; getConfig().set("arena.running",true); markConfigDirty(); send(sender,"started");
+        String prefix = arenaKey("selection-boundary.");
+        var config = getConfig();
+        for (String name : arenaNames()) {
+            if (name.equals(activeArena)) continue;
+            String other = name.equals("default") ? "arena." : "arenas." + name + ".";
+            String bounds = other + "selection-boundary.";
+            if (config.getBoolean(other + "running")
+                    && config.getString(arenaKey("world"), "world").equals(config.getString(other + "world", "world"))
+                    && config.getDouble(prefix + "min-x") <= config.getDouble(bounds + "max-x")
+                    && config.getDouble(prefix + "max-x") >= config.getDouble(bounds + "min-x")
+                    && config.getDouble(prefix + "min-z") <= config.getDouble(bounds + "max-z")
+                    && config.getDouble(prefix + "max-z") >= config.getDouble(bounds + "min-z")) {
+                send(sender, "arena-overlap", Map.of("arena", name));
+                return;
+            }
+        }
+        config.set(arenaKey("eliminated-players"), List.of());
+        getConfig().set(arenaKey("started-at"), System.currentTimeMillis()); lastDamageAt.remove(activeArena); getConfig().set(arenaKey("running"),true); saveConfig(); send(sender,"started");
     }
-    private void stopZone(CommandSender sender) { double frozen=currentRadius(); getConfig().set("arena.start-radius",frozen); getConfig().set("arena.minimum-radius",Math.min(getConfig().getDouble("arena.minimum-radius"),frozen)); getConfig().set("arena.running",false); markConfigDirty(); send(sender,"stopped"); }
+    private void stopZone(CommandSender sender) { double frozen=currentRadius(); getConfig().set(arenaKey("start-radius"),frozen); getConfig().set(arenaKey("minimum-radius"),Math.min(getConfig().getDouble(arenaKey("minimum-radius")),frozen)); getConfig().set(arenaKey("running"),false); saveConfig(); send(sender,"stopped"); }
 
     private void openMenu(Player player) {
-        String title = format("gui-title", Map.of());
+        String title = format("gui-title", Map.of("arena", activeArena));
         ToxicZoneMenuHolder holder = new ToxicZoneMenuHolder(this, title);
         Inventory inventory = holder.getInventory();
         ItemStack filler = guiItem("gui-filler", Material.GRAY_STAINED_GLASS_PANE, Map.of());
         for (int slot=0; slot<inventory.getSize(); slot++) inventory.setItem(slot, filler);
-        String state = messages.getString(getConfig().getBoolean("arena.running") ? "state-running" : "state-stopped", "");
+        String state = messages.getString(getConfig().getBoolean(arenaKey("running")) ? "state-running" : "state-stopped", "");
         Map<String,Object> status = new HashMap<>();
-        status.put("world",getConfig().getString("arena.world","world")); status.put("x",fmt(getConfig().getDouble("arena.center-x"))); status.put("z",fmt(getConfig().getDouble("arena.center-z")));
-        status.put("radius",fmt(currentRadius())); status.put("minimum",fmt(getConfig().getDouble("arena.minimum-radius"))); status.put("state",ChatColor.translateAlternateColorCodes('&',state));
+        status.put("world",getConfig().getString(arenaKey("world"),"world")); status.put("x",fmt(getConfig().getDouble(arenaKey("center-x")))); status.put("z",fmt(getConfig().getDouble(arenaKey("center-z"))));
+        status.put("radius",fmt(currentRadius())); status.put("minimum",fmt(getConfig().getDouble(arenaKey("minimum-radius")))); status.put("state",ChatColor.translateAlternateColorCodes('&',state));
         inventory.setItem(4,guiItem("gui-status",Material.MAP,status));
         inventory.setItem(10,guiItem("gui-center",Material.COMPASS,Map.of()));
-        inventory.setItem(12,guiItem("gui-radius-down",Material.RED_DYE,Map.of())); inventory.setItem(13,guiItem("gui-radius",Material.PAPER,Map.of("value",fmt(getConfig().getDouble("arena.start-radius"))))); inventory.setItem(14,guiItem("gui-radius-up",Material.LIME_DYE,Map.of()));
-        inventory.setItem(16,guiItem("gui-minimum-down",Material.RED_DYE,Map.of())); inventory.setItem(17,guiItem("gui-minimum",Material.PAPER,Map.of("value",fmt(getConfig().getDouble("arena.minimum-radius"))))); inventory.setItem(18,guiItem("gui-minimum-up",Material.LIME_DYE,Map.of()));
-        inventory.setItem(21,guiItem("gui-time-down",Material.RED_DYE,Map.of())); inventory.setItem(22,guiItem("gui-time",Material.CLOCK,Map.of("value",getConfig().getLong("arena.shrink-duration-seconds")))); inventory.setItem(23,guiItem("gui-time-up",Material.LIME_DYE,Map.of()));
-        inventory.setItem(25,guiItem("gui-damage-down",Material.RED_DYE,Map.of())); inventory.setItem(26,guiItem("gui-damage",Material.PAPER,Map.of("value",fmt(getConfig().getDouble("settings.damage"))))); inventory.setItem(27,guiItem("gui-damage-up",Material.LIME_DYE,Map.of()));
-        inventory.setItem(30,guiItem("gui-interval-down",Material.RED_DYE,Map.of())); inventory.setItem(31,guiItem("gui-interval",Material.CLOCK,Map.of("value",fmt(getConfig().getDouble("settings.damage-interval-seconds"))))); inventory.setItem(32,guiItem("gui-interval-up",Material.LIME_DYE,Map.of()));
+        inventory.setItem(12,guiItem("gui-radius-down",Material.RED_DYE,Map.of())); inventory.setItem(13,guiItem("gui-radius",Material.PAPER,Map.of("value",fmt(getConfig().getDouble(arenaKey("start-radius")))))); inventory.setItem(14,guiItem("gui-radius-up",Material.LIME_DYE,Map.of()));
+        inventory.setItem(16,guiItem("gui-minimum-down",Material.RED_DYE,Map.of())); inventory.setItem(17,guiItem("gui-minimum",Material.PAPER,Map.of("value",fmt(getConfig().getDouble(arenaKey("minimum-radius")))))); inventory.setItem(18,guiItem("gui-minimum-up",Material.LIME_DYE,Map.of()));
+        inventory.setItem(21,guiItem("gui-time-down",Material.RED_DYE,Map.of())); inventory.setItem(22,guiItem("gui-time",Material.CLOCK,Map.of("value",getConfig().getLong(arenaKey("shrink-duration-seconds"))))); inventory.setItem(23,guiItem("gui-time-up",Material.LIME_DYE,Map.of()));
+        inventory.setItem(25,guiItem("gui-damage-down",Material.RED_DYE,Map.of())); inventory.setItem(26,guiItem("gui-damage",Material.PAPER,Map.of("value",fmt(getConfig().getDouble(damageKey("damage")))))); inventory.setItem(27,guiItem("gui-damage-up",Material.LIME_DYE,Map.of()));
+        inventory.setItem(30,guiItem("gui-interval-down",Material.RED_DYE,Map.of())); inventory.setItem(31,guiItem("gui-interval",Material.CLOCK,Map.of("value",fmt(getConfig().getDouble(damageKey("damage-interval-seconds")))))); inventory.setItem(32,guiItem("gui-interval-up",Material.LIME_DYE,Map.of()));
         inventory.setItem(34,guiItem("gui-wand",Material.CARROT_ON_A_STICK,Map.of()));
-        inventory.setItem(40,guiItem(getConfig().getBoolean("arena.running")?"gui-stop":"gui-start",getConfig().getBoolean("arena.running")?Material.BARRIER:Material.LIME_CONCRETE,Map.of()));
+        inventory.setItem(40,guiItem(getConfig().getBoolean(arenaKey("running"))?"gui-stop":"gui-start",getConfig().getBoolean(arenaKey("running"))?Material.BARRIER:Material.LIME_CONCRETE,Map.of()));
         inventory.setItem(42,guiItem("gui-reload",Material.WRITABLE_BOOK,Map.of()));
         player.openInventory(inventory);
     }
@@ -247,19 +368,31 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
         event.setCancelled(true);
         if (event.getClickedInventory()!=top || event.getClick()!=ClickType.LEFT || !(event.getWhoClicked() instanceof Player player)) return;
         if (!player.isOp() && !player.hasPermission("auroratoxiczone.admin")) { player.closeInventory(); send(player,"no-permission"); return; }
-        switch(event.getRawSlot()) {
-            case 10 -> { Location loc=player.getLocation(); getConfig().set("arena.world",loc.getWorld().getName()); getConfig().set("arena.center-x",loc.getX()); getConfig().set("arena.center-z",loc.getZ()); getConfig().set("arena.selection-boundary.enabled",false); markConfigDirty(); send(player,"center-set",Map.of("world",loc.getWorld().getName(),"x",fmt(loc.getX()),"z",fmt(loc.getZ()))); }
-            case 12,14 -> { adjustRadius(event.getRawSlot()==12?-10:10); send(player,"radius-set",Map.of("radius",fmt(getConfig().getDouble("arena.start-radius")),"minimum",fmt(getConfig().getDouble("arena.minimum-radius")))); }
-            case 16,18 -> { adjustMinimum(event.getRawSlot()==16?-1:1); send(player,"minimum-set",Map.of("minimum",fmt(getConfig().getDouble("arena.minimum-radius")))); }
-            case 21,23 -> { adjustTime(event.getRawSlot()==21?-60:60); send(player,"time-set",Map.of("seconds",getConfig().getLong("arena.shrink-duration-seconds"))); }
-            case 25,27 -> { adjustDamage(event.getRawSlot()==25?-0.5:0.5); sendDamageSettings(player); }
-            case 30,32 -> { adjustInterval(event.getRawSlot()==30?-0.5:0.5); sendDamageSettings(player); }
+        inArena(selectedArena(player), () -> handleMenuClick(event.getRawSlot(), player, holder));
+    }
+
+    private void handleMenuClick(int slot, Player player, ToxicZoneMenuHolder holder) {
+        if (getConfig().getBoolean(arenaKey("running")) && Set.of(10, 12, 14, 16, 18, 21, 23).contains(slot)) {
+            send(player, "arena-running");
+            return;
+        }
+        switch(slot) {
+            case 10 -> { Location loc=player.getLocation(); getConfig().set(arenaKey("world"),loc.getWorld().getName()); getConfig().set(arenaKey("center-x"),loc.getX()); getConfig().set(arenaKey("center-z"),loc.getZ()); getConfig().set(arenaKey("selection-boundary.enabled"),false); markConfigDirty(); send(player,"center-set",Map.of("world",loc.getWorld().getName(),"x",fmt(loc.getX()),"z",fmt(loc.getZ()))); }
+            case 12,14 -> { adjustRadius(slot==12?-10:10); send(player,"radius-set",Map.of("radius",fmt(getConfig().getDouble(arenaKey("start-radius"))),"minimum",fmt(getConfig().getDouble(arenaKey("minimum-radius"))))); }
+            case 16,18 -> { adjustMinimum(slot==16?-1:1); send(player,"minimum-set",Map.of("minimum",fmt(getConfig().getDouble(arenaKey("minimum-radius"))))); }
+            case 21,23 -> { adjustTime(slot==21?-60:60); send(player,"time-set",Map.of("seconds",getConfig().getLong(arenaKey("shrink-duration-seconds")))); }
+            case 25,27 -> { adjustDamage(slot==25?-0.5:0.5); sendDamageSettings(player); }
+            case 30,32 -> { adjustInterval(slot==30?-0.5:0.5); sendDamageSettings(player); }
             case 34 -> giveWand(player);
-            case 40 -> { if(getConfig().getBoolean("arena.running")) stopZone(player); else startZone(player); }
-            case 42 -> { flushConfig(); ensureConfig(); loadMessages(); send(player,"reload"); }
+            case 40 -> { if(getConfig().getBoolean(arenaKey("running"))) stopZone(player); else startZone(player); }
+            case 42 -> { flushConfig(); ensureConfig(); forEachArena(this::recoverLegacyRound); loadMessages(); send(player,"reload"); }
             default -> { return; }
         }
-        if(player.isOnline() && player.getOpenInventory().getTopInventory().getHolder() instanceof ToxicZoneMenuHolder) openMenu(player);
+        Bukkit.getScheduler().runTask(this, () -> {
+            if (player.isOnline() && player.getOpenInventory().getTopInventory().getHolder() == holder) {
+                inArena(selectedArena(player), () -> openMenu(player));
+            }
+        });
     }
 
     @EventHandler public void onMenuDrag(InventoryDragEvent event) {
@@ -267,12 +400,12 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
         if(top.getHolder() instanceof ToxicZoneMenuHolder holder && holder.getPlugin()==this) event.setCancelled(true);
     }
 
-    private void adjustRadius(double delta) { double radius=Math.max(1,getConfig().getDouble("arena.start-radius")+delta); getConfig().set("arena.start-radius",radius); if(getConfig().getDouble("arena.minimum-radius")>radius)getConfig().set("arena.minimum-radius",radius); markConfigDirty(); }
-    private void adjustMinimum(double delta) { double radius=getConfig().getDouble("arena.start-radius"),min=Math.max(1,Math.min(radius,getConfig().getDouble("arena.minimum-radius")+delta));getConfig().set("arena.minimum-radius",min);markConfigDirty(); }
-    private void adjustTime(long delta) { getConfig().set("arena.shrink-duration-seconds",Math.max(60,getConfig().getLong("arena.shrink-duration-seconds")+delta));markConfigDirty(); }
-    private void adjustDamage(double delta) { getConfig().set("settings.damage",Math.max(0.5,getConfig().getDouble("settings.damage")+delta));markConfigDirty(); }
-    private void adjustInterval(double delta) { getConfig().set("settings.damage-interval-seconds",Math.max(0.5,getConfig().getDouble("settings.damage-interval-seconds")+delta));markConfigDirty(); }
-    private void sendDamageSettings(Player player) { send(player,"damage-set",Map.of("damage",fmt(getConfig().getDouble("settings.damage")),"interval",fmt(getConfig().getDouble("settings.damage-interval-seconds")),"hearts",fmt(getConfig().getDouble("settings.damage")/2))); }
+    private void adjustRadius(double delta) { double radius=Math.max(1,getConfig().getDouble(arenaKey("start-radius"))+delta); getConfig().set(arenaKey("start-radius"),radius); if(getConfig().getDouble(arenaKey("minimum-radius"))>radius)getConfig().set(arenaKey("minimum-radius"),radius); markConfigDirty(); }
+    private void adjustMinimum(double delta) { double radius=getConfig().getDouble(arenaKey("start-radius")),min=Math.max(1,Math.min(radius,getConfig().getDouble(arenaKey("minimum-radius"))+delta));getConfig().set(arenaKey("minimum-radius"),min);markConfigDirty(); }
+    private void adjustTime(long delta) { getConfig().set(arenaKey("shrink-duration-seconds"),Math.max(60,getConfig().getLong(arenaKey("shrink-duration-seconds"))+delta));markConfigDirty(); }
+    private void adjustDamage(double delta) { getConfig().set(damageKey("damage"),Math.max(0.5,getConfig().getDouble(damageKey("damage"))+delta));markConfigDirty(); }
+    private void adjustInterval(double delta) { getConfig().set(damageKey("damage-interval-seconds"),Math.max(0.5,getConfig().getDouble(damageKey("damage-interval-seconds"))+delta));markConfigDirty(); }
+    private void sendDamageSettings(Player player) { send(player,"damage-set",Map.of("damage",fmt(getConfig().getDouble(damageKey("damage"))),"interval",fmt(getConfig().getDouble(damageKey("damage-interval-seconds"))),"hearts",fmt(getConfig().getDouble(damageKey("damage"))/2))); }
 
     private void flushConfig() { if(configSaveTask!=null)configSaveTask.cancel(); if(configDirty){saveConfig();configDirty=false;} configSaveTask=null; }
 
@@ -296,6 +429,12 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
     }
 
     @EventHandler public void onWandUse(PlayerInteractEvent event) {
+        if (event.getHand() != EquipmentSlot.HAND || event.getItem() == null
+                || event.getItem().getType() != Material.CARROT_ON_A_STICK) return;
+        inArena(selectedArena(event.getPlayer()), () -> handleWandUse(event));
+    }
+
+    private void handleWandUse(PlayerInteractEvent event) {
         if (event.getHand() != EquipmentSlot.HAND || event.getItem() == null || wandKey == null || wandIdKey == null) return;
         ItemMeta meta = event.getItem().getItemMeta();
         if (meta == null || !meta.getPersistentDataContainer().has(wandKey, PersistentDataType.BYTE)
@@ -306,6 +445,10 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
         if ((action != Action.LEFT_CLICK_BLOCK && action != Action.RIGHT_CLICK_BLOCK) || event.getClickedBlock() == null) return;
         event.setCancelled(true);
         if (!player.isOp() && !player.hasPermission("auroratoxiczone.admin")) { send(player,"no-permission"); return; }
+        if (getConfig().getBoolean(arenaKey("running"))) {
+            send(player, "arena-running");
+            return;
+        }
         BlockPoint point = new BlockPoint(player.getWorld().getUID(), player.getWorld().getName(), event.getClickedBlock().getX(), event.getClickedBlock().getY(), event.getClickedBlock().getZ());
         RegionSelection selection = selections.computeIfAbsent(player.getUniqueId(), ignored -> new RegionSelection());
         if (action == Action.LEFT_CLICK_BLOCK) {
@@ -328,62 +471,78 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
         double width = Math.abs(first.x() - second.x()) + 1.0;
         double depth = Math.abs(first.z() - second.z()) + 1.0;
         double radius = Math.max(0.5, Math.min(width, depth) / 2.0);
-        getConfig().set("arena.world", first.worldName());
-        getConfig().set("arena.center-x", centerX);
-        getConfig().set("arena.center-z", centerZ);
-        getConfig().set("arena.start-radius", radius);
-        getConfig().set("arena.minimum-radius", Math.min(getConfig().getDouble("arena.minimum-radius", 5.0), radius));
+        getConfig().set(arenaKey("world"), first.worldName());
+        getConfig().set(arenaKey("center-x"), centerX);
+        getConfig().set(arenaKey("center-z"), centerZ);
+        getConfig().set(arenaKey("start-radius"), radius);
+        getConfig().set(arenaKey("minimum-radius"), Math.min(getConfig().getDouble(arenaKey("minimum-radius"), 5.0), radius));
         saveSelectionBoundary(Math.min(first.x(),second.x()),Math.max(first.x(),second.x())+1.0,Math.min(first.z(),second.z()),Math.max(first.z(),second.z())+1.0);
-        if (getConfig().getBoolean("arena.running")) { startedAt = System.currentTimeMillis(); lastDamageAt = 0; }
         markConfigDirty();
         selections.remove(player.getUniqueId());
         send(player,"selection-complete",Map.of("x",String.format(Locale.ROOT,"%.1f",centerX),"z",String.format(Locale.ROOT,"%.1f",centerZ),"radius",String.format(Locale.ROOT,"%.1f",radius)));
     }
 
     private void saveSelectionBoundary(double minX,double maxX,double minZ,double maxZ) {
-        getConfig().set("arena.selection-boundary.enabled",true);
-        getConfig().set("arena.selection-boundary.min-x",minX);
-        getConfig().set("arena.selection-boundary.max-x",maxX);
-        getConfig().set("arena.selection-boundary.min-z",minZ);
-        getConfig().set("arena.selection-boundary.max-z",maxZ);
+        getConfig().set(arenaKey("selection-boundary.enabled"),true);
+        getConfig().set(arenaKey("selection-boundary.min-x"),minX);
+        getConfig().set(arenaKey("selection-boundary.max-x"),maxX);
+        getConfig().set(arenaKey("selection-boundary.min-z"),minZ);
+        getConfig().set(arenaKey("selection-boundary.max-z"),maxZ);
     }
 
-    @EventHandler public void onQuit(PlayerQuitEvent event) { selections.remove(event.getPlayer().getUniqueId()); }
+    @EventHandler public void onQuit(PlayerQuitEvent event) { selections.remove(event.getPlayer().getUniqueId()); selectedArenas.remove(event.getPlayer().getUniqueId()); }
     @EventHandler public void onDeath(PlayerDeathEvent event) {
-        if (!getConfig().getBoolean("arena.running")) return;
-        eliminatedPlayers.add(event.getEntity().getUniqueId());
-        getConfig().set("arena.eliminated-players",eliminatedPlayers.stream().map(UUID::toString).toList());
-        markConfigDirty();
+        Player player = event.getEntity();
+        forEachArena(() -> {
+            if (!getConfig().getBoolean(arenaKey("running")) || !insideArena(player.getLocation())) return;
+            String key = arenaKey("eliminated-players");
+            List<String> eliminated = getConfig().getStringList(key);
+            String id = player.getUniqueId().toString();
+            if (!eliminated.contains(id)) {
+                eliminated.add(id);
+                getConfig().set(key, eliminated);
+                markConfigDirty();
+            }
+        });
     }
 
-    private double currentRadius(){double start=getConfig().getDouble("arena.start-radius",200),min=getConfig().getDouble("arena.minimum-radius",5);if(!getConfig().getBoolean("arena.running"))return start;double duration=Math.max(1,getConfig().getDouble("arena.shrink-duration-seconds",1800));double progress=Math.min(1,(System.currentTimeMillis()-startedAt)/1000.0/duration);return start-(start-min)*progress;}
+    private boolean insideArena(Location location) {
+        return location.getWorld().getName().equals(getConfig().getString(arenaKey("world"), "world"))
+                && getConfig().getBoolean(arenaKey("selection-boundary.enabled"))
+                && location.getX() >= getConfig().getDouble(arenaKey("selection-boundary.min-x"))
+                && location.getX() <= getConfig().getDouble(arenaKey("selection-boundary.max-x"))
+                && location.getZ() >= getConfig().getDouble(arenaKey("selection-boundary.min-z"))
+                && location.getZ() <= getConfig().getDouble(arenaKey("selection-boundary.max-z"));
+    }
+
+    private double currentRadius(){double start=getConfig().getDouble(arenaKey("start-radius"),200),min=getConfig().getDouble(arenaKey("minimum-radius"),5);if(!getConfig().getBoolean(arenaKey("running")))return start;double duration=Math.max(1,getConfig().getDouble(arenaKey("shrink-duration-seconds"),1800));double progress=Math.min(1,elapsedMillis(System.currentTimeMillis())/1000.0/duration);return start-(start-min)*progress;}
     private void tickZone(){
-        if(!getConfig().getBoolean("arena.running"))return;
+        if(!getConfig().getBoolean(arenaKey("running")))return;
         long now=System.currentTimeMillis();
-        double duration=Math.max(1,getConfig().getDouble("arena.shrink-duration-seconds",1800));
-        if((now-startedAt)/1000.0>=duration){
-            double minimum=getConfig().getDouble("arena.minimum-radius",5.0);
-            getConfig().set("arena.start-radius",minimum);
-            getConfig().set("arena.running",false);
-            markConfigDirty();
-            World arenaWorld=Bukkit.getWorld(getConfig().getString("arena.world","world"));
-            if(arenaWorld!=null)for(Player player:arenaWorld.getPlayers())send(player,"shrink-complete",Map.of("radius",fmt(minimum)));
+        double duration=Math.max(1,getConfig().getDouble(arenaKey("shrink-duration-seconds"),1800));
+        if(elapsedMillis(now)/1000.0>=duration){
+            double minimum=getConfig().getDouble(arenaKey("minimum-radius"),5.0);
+            getConfig().set(arenaKey("running"),false);
+            saveConfig();
+            World arenaWorld=Bukkit.getWorld(getConfig().getString(arenaKey("world"),"world"));
+            if(arenaWorld!=null)for(Player player:arenaWorld.getPlayers())if(insideArena(player.getLocation()))send(player,"shrink-complete",Map.of("radius",fmt(minimum)));
             return;
         }
-        String worldName=getConfig().getString("arena.world","world");World world=Bukkit.getWorld(worldName);if(world==null)return;double radius=currentRadius();
-        double interval=Math.max(.1,getConfig().getDouble("settings.damage-interval-seconds",1));if(now-lastDamageAt<interval*1000)return;lastDamageAt=now;double cx=getConfig().getDouble("arena.center-x"),cz=getConfig().getDouble("arena.center-z"),damage=Math.max(.1,getConfig().getDouble("settings.damage",3));
+        String worldName=getConfig().getString(arenaKey("world"),"world");World world=Bukkit.getWorld(worldName);if(world==null)return;double radius=currentRadius();
+        double interval=Math.max(.1,getConfig().getDouble(damageKey("damage-interval-seconds"),1));if(now-lastDamageAt.getOrDefault(activeArena, 0L)<interval*1000)return;lastDamageAt.put(activeArena, now);double cx=getConfig().getDouble(arenaKey("center-x")),cz=getConfig().getDouble(arenaKey("center-z")),damage=Math.max(.1,getConfig().getDouble(damageKey("damage"),3));
+        Set<String> eliminated = new HashSet<>(getConfig().getStringList(arenaKey("eliminated-players")));
         for(Player p:world.getPlayers()){
-            UUID playerId=p.getUniqueId();
-            if(eliminatedPlayers.contains(playerId)||p.isDead()||p.getHealth()<=0.0||p.getGameMode()==org.bukkit.GameMode.SPECTATOR)continue;
+            String playerId=p.getUniqueId().toString();
+            if(eliminated.contains(playerId)||p.isDead()||p.getHealth()<=0.0||p.getGameMode()==org.bukkit.GameMode.SPECTATOR)continue;
             Location l=p.getLocation();double dx=l.getX()-cx,dz=l.getZ()-cz;
-            if(dx*dx+dz*dz>radius*radius&&!p.isDead()&&p.getHealth()>0.0)p.damage(damage);
+            if(insideArena(l)&&dx*dx+dz*dz>radius*radius&&!p.isDead()&&p.getHealth()>0.0)p.damage(damage);
         }
     }
     private void renderBoundary(){
         if(!getConfig().getBoolean("settings.particles.enabled",true))return;
-        World world=Bukkit.getWorld(getConfig().getString("arena.world","world"));
+        World world=Bukkit.getWorld(getConfig().getString(arenaKey("world"),"world"));
         if(world==null||world.getPlayers().isEmpty())return;
-        double cx=getConfig().getDouble("arena.center-x"),cz=getConfig().getDouble("arena.center-z");
+        double cx=getConfig().getDouble(arenaKey("center-x")),cz=getConfig().getDouble(arenaKey("center-z"));
         int maxPoints=Math.max(24,Math.min(1440,getConfig().getInt("settings.particles.points",720)));
         int layers=Math.max(4,Math.min(24,getConfig().getInt("settings.particles.layers",12)));
         double verticalSpacing=Math.max(0.5,Math.min(2.0,getConfig().getDouble("settings.particles.vertical-spacing",1.0)));
@@ -391,15 +550,15 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
         double viewDistanceSquared=viewDistance*viewDistance;
         float dustSize=(float)Math.max(1.0,Math.min(4.0,getConfig().getDouble("settings.particles.dust-size",2.0)));
         Particle.DustOptions dust=new Particle.DustOptions(Color.fromRGB(70,255,90),dustSize);
-        boolean running=getConfig().getBoolean("arena.running");
+        boolean running=getConfig().getBoolean(arenaKey("running"));
         double radius=currentRadius();
         double minX,maxX,minZ,maxZ;
-        if(getConfig().getBoolean("arena.selection-boundary.enabled")){
-            minX=getConfig().getDouble("arena.selection-boundary.min-x");maxX=getConfig().getDouble("arena.selection-boundary.max-x");
-            minZ=getConfig().getDouble("arena.selection-boundary.min-z");maxZ=getConfig().getDouble("arena.selection-boundary.max-z");
+        if(getConfig().getBoolean(arenaKey("selection-boundary.enabled"))){
+            minX=getConfig().getDouble(arenaKey("selection-boundary.min-x"));maxX=getConfig().getDouble(arenaKey("selection-boundary.max-x"));
+            minZ=getConfig().getDouble(arenaKey("selection-boundary.min-z"));maxZ=getConfig().getDouble(arenaKey("selection-boundary.max-z"));
         } else {
-            minX=cx-getConfig().getDouble("arena.start-radius");maxX=cx+getConfig().getDouble("arena.start-radius");
-            minZ=cz-getConfig().getDouble("arena.start-radius");maxZ=cz+getConfig().getDouble("arena.start-radius");
+            minX=cx-getConfig().getDouble(arenaKey("start-radius"));maxX=cx+getConfig().getDouble(arenaKey("start-radius"));
+            minZ=cz-getConfig().getDouble(arenaKey("start-radius"));maxZ=cz+getConfig().getDouble(arenaKey("start-radius"));
         }
         double lineSpacing=Math.max(0.5,Math.min(2.0,getConfig().getDouble("settings.particles.line-spacing",0.75)));
         for(Player viewer:world.getPlayers()){
@@ -461,5 +620,5 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
     private void tellVersion(CommandSender s,String latest){if(latest==null){send(s,"version-unavailable");return;}String current=getDescription().getVersion();if(isNewer(latest,current))send(s,"update-available",Map.of("latest",latest,"current",current));else if(isNewer(current,latest))send(s,"dev-build");else send(s,"up-to-date",Map.of("current",current));}
     private boolean isNewer(String a,String b){int[] x=parts(a),y=parts(b);if(x==null||y==null)return false;for(int i=0;i<3;i++){if(x[i]!=y[i])return x[i]>y[i];}return false;}
     private int[] parts(String s){Matcher m=VERSION.matcher(s);if(!m.find())return null;return new int[]{Integer.parseInt(m.group(1)),Integer.parseInt(m.group(2)),Integer.parseInt(m.group(3))};}
-    @Override public List<String> onTabComplete(CommandSender s,Command c,String a,String[] args){if(!s.isOp()&&!s.hasPermission("auroratoxiczone.admin"))return List.of();if(args.length==1)return List.of("help","status","start","stop","center","wand","radius","time","damage","reload","version").stream().filter(x->x.startsWith(args[0].toLowerCase(Locale.ROOT))).toList();if(args[0].equalsIgnoreCase("center")&&args.length==2)return Bukkit.getWorlds().stream().map(World::getName).filter(x->x.startsWith(args[1])).toList();return List.of();}
+    @Override public List<String> onTabComplete(CommandSender s,Command c,String a,String[] args){if(!s.isOp()&&!s.hasPermission("auroratoxiczone.admin"))return List.of();if(args.length==1)return List.of("arena","help","status","start","stop","center","wand","radius","time","damage","reload","version").stream().filter(x->x.startsWith(args[0].toLowerCase(Locale.ROOT))).toList();if(args[0].equalsIgnoreCase("arena") && args.length==2)return List.of("create","use","list").stream().filter(x->x.startsWith(args[1].toLowerCase(Locale.ROOT))).toList();if(args[0].equalsIgnoreCase("arena") && args.length==3 && args[1].equalsIgnoreCase("use"))return arenaNames().stream().filter(x->x.startsWith(args[2])).toList();if(args[0].equalsIgnoreCase("center")&&args.length==2)return Bukkit.getWorlds().stream().map(World::getName).filter(x->x.startsWith(args[1])).toList();return List.of();}
 }
