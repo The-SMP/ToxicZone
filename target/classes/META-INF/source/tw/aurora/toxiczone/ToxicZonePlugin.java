@@ -17,6 +17,7 @@ import org.bukkit.event.block.Action;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerResourcePackStatusEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
@@ -248,11 +249,11 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
         if (!player.isOp() && !player.hasPermission("auroratoxiczone.admin")) { player.closeInventory(); send(player,"no-permission"); return; }
         switch(event.getRawSlot()) {
             case 10 -> { Location loc=player.getLocation(); getConfig().set("arena.world",loc.getWorld().getName()); getConfig().set("arena.center-x",loc.getX()); getConfig().set("arena.center-z",loc.getZ()); getConfig().set("arena.selection-boundary.enabled",false); markConfigDirty(); send(player,"center-set",Map.of("world",loc.getWorld().getName(),"x",fmt(loc.getX()),"z",fmt(loc.getZ()))); }
-            case 12 -> adjustRadius(-10); case 14 -> adjustRadius(10);
-            case 16 -> adjustMinimum(-1); case 18 -> adjustMinimum(1);
-            case 21 -> adjustTime(-60); case 23 -> adjustTime(60);
-            case 25 -> adjustDamage(-0.5); case 27 -> adjustDamage(0.5);
-            case 30 -> adjustInterval(-0.5); case 32 -> adjustInterval(0.5);
+            case 12,14 -> { adjustRadius(event.getRawSlot()==12?-10:10); send(player,"radius-set",Map.of("radius",fmt(getConfig().getDouble("arena.start-radius")),"minimum",fmt(getConfig().getDouble("arena.minimum-radius")))); }
+            case 16,18 -> { adjustMinimum(event.getRawSlot()==16?-1:1); send(player,"minimum-set",Map.of("minimum",fmt(getConfig().getDouble("arena.minimum-radius")))); }
+            case 21,23 -> { adjustTime(event.getRawSlot()==21?-60:60); send(player,"time-set",Map.of("seconds",getConfig().getLong("arena.shrink-duration-seconds"))); }
+            case 25,27 -> { adjustDamage(event.getRawSlot()==25?-0.5:0.5); sendDamageSettings(player); }
+            case 30,32 -> { adjustInterval(event.getRawSlot()==30?-0.5:0.5); sendDamageSettings(player); }
             case 34 -> giveWand(player);
             case 40 -> { if(getConfig().getBoolean("arena.running")) stopZone(player); else startZone(player); }
             case 42 -> { flushConfig(); ensureConfig(); loadMessages(); send(player,"reload"); }
@@ -271,6 +272,7 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
     private void adjustTime(long delta) { getConfig().set("arena.shrink-duration-seconds",Math.max(60,getConfig().getLong("arena.shrink-duration-seconds")+delta));markConfigDirty(); }
     private void adjustDamage(double delta) { getConfig().set("settings.damage",Math.max(0.5,getConfig().getDouble("settings.damage")+delta));markConfigDirty(); }
     private void adjustInterval(double delta) { getConfig().set("settings.damage-interval-seconds",Math.max(0.5,getConfig().getDouble("settings.damage-interval-seconds")+delta));markConfigDirty(); }
+    private void sendDamageSettings(Player player) { send(player,"damage-set",Map.of("damage",fmt(getConfig().getDouble("settings.damage")),"interval",fmt(getConfig().getDouble("settings.damage-interval-seconds")),"hearts",fmt(getConfig().getDouble("settings.damage")/2))); }
 
     private void flushConfig() { if(configSaveTask!=null)configSaveTask.cancel(); if(configDirty){saveConfig();configDirty=false;} configSaveTask=null; }
 
@@ -285,6 +287,7 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
         meta.getPersistentDataContainer().set(wandIdKey, PersistentDataType.INTEGER, 1001);
         var customModelData = meta.getCustomModelDataComponent();
         customModelData.setStrings(List.of("1001"));
+        customModelData.setFloats(List.of(1001.0f));
         meta.setCustomModelDataComponent(customModelData);
         item.setItemMeta(meta);
         Map<Integer, ItemStack> overflow = player.getInventory().addItem(item);
@@ -451,6 +454,7 @@ public final class ToxicZonePlugin extends JavaPlugin implements CommandExecutor
     @EventHandler public void onJoin(PlayerJoinEvent event){Player player=event.getPlayer();if(resourcePack!=null)Bukkit.getScheduler().runTaskLater(this,()->{if(player.isOnline())resourcePack.send(player);},20L);if(!player.hasPermission("auroratoxiczone.version"))return;
         Bukkit.getScheduler().runTaskLater(this,()->checkGitHubAsync(latest->{if(latest==null||!isNewer(latest,getDescription().getVersion()))return;Bukkit.getScheduler().runTask(this,()->{if(player.isOnline()&&player.hasPermission("auroratoxiczone.version"))send(player,"update-available",Map.of("latest",latest,"current",getDescription().getVersion()));});}),20L*Math.max(0,getConfig().getInt("settings.reminder-delay-seconds",3)));
     }
+    @EventHandler public void onResourcePackStatus(PlayerResourcePackStatusEvent event){String status=event.getStatus().name();if(status.equals("SUCCESSFULLY_LOADED"))getLogger().info("資源包已由玩家 " + event.getPlayer().getName() + " 載入。");else if(status.equals("DECLINED")||status.equals("FAILED_DOWNLOAD")||status.equals("INVALID_URL"))getLogger().warning("玩家 " + event.getPlayer().getName() + " 的資源包狀態：" + status);}
     private void checkGitHubAsync(java.util.function.Consumer<String> callback){String repo=getConfig().getString("settings.github-repository","").trim();if(repo.isEmpty()){callback.accept(null);return;}if(!repo.matches("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")){getLogger().warning("settings.github-repository 格式無效，請使用 owner/repository。");callback.accept(null);return;}if(cacheValid&&System.currentTimeMillis()-cachedAt<600000){callback.accept(cachedLatest);return;}CompletableFuture<String> active=fetchInFlight;if(active!=null){active.thenAccept(callback);return;}
         CompletableFuture<String> request=CompletableFuture.supplyAsync(()->{try{HttpRequest req=HttpRequest.newBuilder(URI.create("https://api.github.com/repos/"+repo+"/releases/latest")).timeout(Duration.ofSeconds(8)).header("Accept","application/vnd.github+json").header("User-Agent","AuroraToxicZone").GET().build();HttpResponse<String> response=http.send(req,HttpResponse.BodyHandlers.ofString());if(response.statusCode()!=200)return null;Matcher m=Pattern.compile("\"tag_name\"\\s*:\\s*\"([^\"]+)\"").matcher(response.body());return m.find()?m.group(1):null;}catch(Exception e){return null;}});fetchInFlight=request;request.thenAccept(v->{cachedLatest=v;cachedAt=System.currentTimeMillis();cacheValid=true;fetchInFlight=null;callback.accept(v);});
     }

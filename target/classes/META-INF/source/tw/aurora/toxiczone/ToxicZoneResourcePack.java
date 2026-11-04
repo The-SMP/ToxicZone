@@ -46,7 +46,12 @@ final class ToxicZoneResourcePack {
             plugin.getLogger().warning("無法取得玩家 " + player.getName() + " 的 HttpHub 公開網址。");
             return;
         }
-        player.setResourcePack(url, sha1, true);
+        String versionedUrl = url + "?v=" + HexFormat.of().formatHex(sha1);
+        try {
+            player.setResourcePack(versionedUrl, sha1, true);
+        } catch (RuntimeException e) {
+            plugin.getLogger().warning("無法向玩家 " + player.getName() + " 發送資源包：" + e.getMessage());
+        }
     }
 
     void stop() {
