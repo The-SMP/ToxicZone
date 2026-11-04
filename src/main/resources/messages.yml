@@ -1,0 +1,109 @@
+prefix: "&8[&b極光毒圈&8] &r"
+only-player: "&c此指令只能由玩家執行。"
+no-permission: "&c你沒有權限執行此操作。"
+help: |-
+  &b&l毒圈管理 &8| &7指令列表
+  &8&m--------------------------------
+  &f/tz &8- &7開啟箱子控制面板
+  &e區域設定
+  &f/tz status &8- &7查看目前狀態
+  &f/tz center [世界 x z] &8- &7設定中心位置
+  &f/tz wand &8- &7取得區域選取釣竿
+  &f/tz radius <起始> [最小] &8- &7設定安全區半徑
+  &f/tz time <秒數> &8- &7設定縮圈時間
+  &f/tz damage <傷害> [間隔] &8- &7設定傷害與間隔
+
+  &e縮圈控制
+  &f/tz start &8/ &fstop &8- &7開始或停止縮圈
+  &f/tz reload &8- &7重新載入設定
+  &f/tz version &8- &7檢查插件版本
+  &8&m--------------------------------
+  &7管理指令需管理權限；版本檢查需版本權限。
+status: "&a世界 {world}，中心 {x}, {z}，目前半徑 {radius}，最小半徑 {minimum}，剩餘 {remaining} 秒，狀態 {state}。"
+state-running: "&a縮圈中"
+state-stopped: "&c未開始"
+started: "&a縮圈已開始。"
+stopped: "&e縮圈已停止。"
+center-set: "&a安全區中心已設為 {world} 的 {x}, {z}。"
+center-usage: "&c用法：/toxiczone center [世界 x z]（不帶參數時使用你目前的位置）"
+radius-set: "&a半徑已設定：起始 {radius}，最小 {minimum}。"
+radius-usage: "&c用法：/toxiczone radius <起始半徑> [最小半徑]"
+time-set: "&a縮圈時間設為 {seconds} 秒。"
+time-usage: "&c用法：/toxiczone time <秒數>"
+damage-set: "&a毒圈每 {interval} 秒造成 {damage} 點傷害（{hearts} 格紅心）。"
+damage-usage: "&c用法：/toxiczone damage <傷害值> [間隔秒數]"
+invalid-number: "&c數值無效，請輸入大於零的數字。"
+zone-shrunk: "&c毒圈已縮至半徑 {radius} 格！"
+shrink-complete: "&e安全區已縮至最小範圍 {radius} 格，縮圈結束。"
+update-available: "&e發現新版本 {latest}，目前版本 {current}。"
+up-to-date: "&a目前已是最新版本 {current}。"
+dev-build: "&e目前版本比 GitHub 新（開發版）。"
+version-unavailable: "&c暫時無法取得 GitHub 版本資訊。"
+reload: "&a設定與訊息已重新載入，缺少項目已補齊。"
+wand-name: "&b區域選取釣竿"
+wand-lore: "&7左鍵選第一角，右鍵選第二角。"
+wand-given: "&a已取得區域選取釣竿。左鍵選第一角，右鍵選第二角。"
+selection-first: "&a第一角已設定：{world} ({x}, {y}, {z})。"
+selection-second: "&a第二角已設定：{world} ({x}, {y}, {z})。"
+selection-first-needed: "&c請先左鍵方塊設定第一角，再右鍵設定第二角。"
+selection-world-error: "&c兩個選取點必須位於同一個世界，請重新選取。"
+selection-complete: "&a區域已設定：中心 {x}, {z}，起始半徑 {radius} 格。高度座標不影響水平毒圈大小。"
+gui-title: "&8毒圈控制面板"
+gui-filler.name: "&0 "
+gui-status.name: "&b&l目前狀態"
+gui-status.lore:
+  - "&7世界：{world}"
+  - "&7中心：{x}, {z}"
+  - "&7目前半徑：{radius} 格"
+  - "&7最小半徑：{minimum} 格"
+  - "&7狀態：{state}"
+gui-center.name: "&e設定中心"
+gui-center.lore:
+  - "&7將你目前的位置設為中心。"
+gui-radius-down.name: "&c起始半徑 -10"
+gui-radius-down.lore:
+  - "&7左鍵縮小起始半徑。"
+gui-radius.name: "&b起始半徑：{value} 格"
+gui-radius-up.name: "&a起始半徑 +10"
+gui-radius-up.lore:
+  - "&7左鍵增加起始半徑。"
+gui-minimum-down.name: "&c最小半徑 -1"
+gui-minimum-down.lore:
+  - "&7左鍵縮小最終安全區。"
+gui-minimum.name: "&b最小半徑：{value} 格"
+gui-minimum-up.name: "&a最小半徑 +1"
+gui-minimum-up.lore:
+  - "&7左鍵增加最終安全區。"
+gui-time-down.name: "&c縮圈時間 -60 秒"
+gui-time-down.lore:
+  - "&7左鍵縮短縮圈時間。"
+gui-time.name: "&b縮圈時間：{value} 秒"
+gui-time-up.name: "&a縮圈時間 +60 秒"
+gui-time-up.lore:
+  - "&7左鍵延長縮圈時間。"
+gui-damage-down.name: "&c傷害 -0.5"
+gui-damage-down.lore:
+  - "&7左鍵降低每次毒圈傷害。"
+gui-damage.name: "&b每次傷害：{value}"
+gui-damage-up.name: "&a傷害 +0.5"
+gui-damage-up.lore:
+  - "&7左鍵增加每次毒圈傷害。"
+gui-interval-down.name: "&c傷害間隔 -0.5 秒"
+gui-interval-down.lore:
+  - "&7左鍵縮短受傷間隔。"
+gui-interval.name: "&b傷害間隔：{value} 秒"
+gui-interval-up.name: "&a傷害間隔 +0.5 秒"
+gui-interval-up.lore:
+  - "&7左鍵延長受傷間隔。"
+gui-wand.name: "&b取得區域選取釣竿"
+gui-wand.lore:
+  - "&7左鍵此處取得選區工具。"
+gui-start.name: "&a開始縮圈"
+gui-start.lore:
+  - "&7左鍵開始縮小安全區。"
+gui-stop.name: "&c停止縮圈"
+gui-stop.lore:
+  - "&7左鍵停止並保留目前半徑。"
+gui-reload.name: "&e重新載入設定"
+gui-reload.lore:
+  - "&7左鍵重新載入設定與訊息。"
