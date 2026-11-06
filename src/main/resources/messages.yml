@@ -203,3 +203,5 @@ gui-delete.lore:
 gui-delete-confirm.lore:
   - "&7目標場地 {arena}"
   - "&c點選後永久移除此場地。"
+
+wand-wrong-arena: "&c這支區域選取釣竿屬於場地 {wand-arena}，無法用於目前的場地 {arena}。請在新場地重新領取釣竿。"

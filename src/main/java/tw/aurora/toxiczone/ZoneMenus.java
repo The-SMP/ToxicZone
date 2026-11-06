@@ -28,6 +28,7 @@ final class ZoneMenus implements Listener {
   }
 
   void settings(Player player, Arena a) {
+    plugin.arenas.select(player, a.id);
     var args = plugin.commands.values(a);
     args.put("arena-short", a.id.length() > 16 ? a.id.substring(0, 15) + "…" : a.id);
     var holder =

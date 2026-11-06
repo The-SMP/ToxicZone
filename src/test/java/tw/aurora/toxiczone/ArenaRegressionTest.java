@@ -253,4 +253,61 @@ class ArenaRegressionTest {
     assertTrue(lines.size() > 1);
     for (String line : lines) assertTrue(ChatColor.stripColor(line).length() <= 21);
   }
+
+  @Test
+  void wandFromAnotherArenaIsRejectedAndSwitchingClearsFirstCorner() {
+    Arena a = arena("a", 0);
+    arena("b", 500);
+    Player player = mock(Player.class);
+    when(player.getUniqueId()).thenReturn(UUID.randomUUID());
+    when(plugin.admin(player)).thenReturn(true);
+    SelectionWand wand = new SelectionWand(plugin);
+    plugin.wand = wand;
+
+    var item = mock(org.bukkit.inventory.ItemStack.class);
+    var meta = mock(org.bukkit.inventory.meta.ItemMeta.class);
+    var data = mock(org.bukkit.persistence.PersistentDataContainer.class);
+    when(item.getType()).thenReturn(Material.CARROT_ON_A_STICK);
+    when(item.getItemMeta()).thenReturn(meta);
+    when(meta.getPersistentDataContainer()).thenReturn(data);
+    when(data.getOrDefault(
+            any(NamespacedKey.class), eq(org.bukkit.persistence.PersistentDataType.INTEGER), eq(0)))
+        .thenReturn(1001);
+    when(data.has(any(NamespacedKey.class), eq(org.bukkit.persistence.PersistentDataType.BYTE)))
+        .thenReturn(true);
+    when(data.get(
+            eq(new NamespacedKey("toxiczone", "arena")),
+            eq(org.bukkit.persistence.PersistentDataType.STRING)))
+        .thenReturn("a");
+    when(data.get(
+            eq(new NamespacedKey("toxiczone", "arena_token")),
+            eq(org.bukkit.persistence.PersistentDataType.STRING)))
+        .thenReturn(a.token);
+
+    var event = mock(org.bukkit.event.player.PlayerInteractEvent.class);
+    when(event.getPlayer()).thenReturn(player);
+    when(event.getHand()).thenReturn(org.bukkit.inventory.EquipmentSlot.HAND);
+    when(event.getItem()).thenReturn(item);
+    var block = mock(org.bukkit.block.Block.class);
+    var world = mock(World.class);
+    when(world.getName()).thenReturn("world");
+    when(block.getWorld()).thenReturn(world);
+    when(event.getClickedBlock()).thenReturn(block);
+    when(event.getAction()).thenReturn(org.bukkit.event.block.Action.LEFT_CLICK_BLOCK);
+
+    manager.select(player, "b");
+    wand.use(event);
+    verify(plugin.messages)
+        .send(player, "wand-wrong-arena", Map.of("wand-arena", "a", "arena", "b"));
+    verify(plugin.files, never()).save(any());
+
+    manager.select(player, "a");
+    wand.use(event);
+    manager.select(player, "b");
+    manager.select(player, "a");
+    when(event.getAction()).thenReturn(org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK);
+    wand.use(event);
+    verify(plugin.messages).send(player, "selection-first-needed");
+    verify(plugin.files, never()).save(any());
+  }
 }

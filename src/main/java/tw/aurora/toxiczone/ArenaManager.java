@@ -90,6 +90,7 @@ final class ArenaManager {
 
   void select(Player player, String id) {
     selected.put(player.getUniqueId(), id);
+    if (plugin.wand != null) plugin.wand.forget(player.getUniqueId());
   }
 
   void forget(UUID player) {

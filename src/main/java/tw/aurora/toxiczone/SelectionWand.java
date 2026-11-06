@@ -24,6 +24,7 @@ final class SelectionWand implements Listener {
   }
 
   void give(Player player, Arena arena) {
+    plugin.arenas.select(player, arena.id);
     var item = new ItemStack(Material.CARROT_ON_A_STICK);
     var meta = item.getItemMeta();
     meta.setDisplayName(plugin.messages.text("wand-name", Map.of()));
@@ -67,6 +68,15 @@ final class SelectionWand implements Listener {
     Arena arena = id == null ? null : plugin.arenas.arenas.get(id);
     if (arena == null || !arena.token.equals(data.get(token, PersistentDataType.STRING))) {
       plugin.messages.send(player, "wand-unbound");
+      return;
+    }
+    Arena selected = plugin.arenas.selected(player);
+    if (selected != arena) {
+      points.remove(player.getUniqueId());
+      plugin.messages.send(
+          player,
+          "wand-wrong-arena",
+          Map.of("wand-arena", arena.id, "arena", selected == null ? "-" : selected.id));
       return;
     }
     if (arena.running) {
@@ -128,6 +138,10 @@ final class SelectionWand implements Listener {
     UUID id = event.getPlayer().getUniqueId();
     points.remove(id);
     plugin.arenas.forget(id);
+  }
+
+  void forget(UUID player) {
+    points.remove(player);
   }
 
   void clear() {
