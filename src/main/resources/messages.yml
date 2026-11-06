@@ -2,41 +2,57 @@ prefix: "&8[&b極光毒圈&8] &r"
 only-player: "&c此指令只能由玩家執行。"
 no-permission: "&c你沒有權限執行此操作。"
 help: |-
-  &b&l毒圈管理 &8| &7指令列表
-  &8&m--------------------------------
-  &f/tz &8- &7開啟箱子控制面板
-  &f/tz arena <create|use|list> &8- &7建立、切換或列出場地
-  &e區域設定
-  &f/tz status &8- &7查看目前狀態
-  &f/tz center [世界 x z] &8- &7設定中心位置
-  &f/tz wand &8- &7取得區域選取釣竿
-  &f/tz radius <起始> [最小] &8- &7設定安全區半徑
-  &f/tz time <秒數> &8- &7設定縮圈時間
-  &f/tz damage <傷害> [間隔] &8- &7設定傷害與間隔
+  &b毒圈管理
+  &f/tz &7開啟控制面板
+  &f/tz arena list &7列出場地
+  &f/tz arena create <名稱> &7建立場地
+  &f/tz arena use <名稱> &7選取場地
+  &f/tz arena delete <名稱> confirm &7刪除場地
+  &f/tz [場地] status &7查看狀態
+  &f/tz [場地] start &7開始縮圈
+  &f/tz [場地] stop &7停止傷害與縮圈
+  &f/tz [場地] center [世界 x z] &7設定中心
+  &f/tz [場地] wand &7取得綁定場地的釣竿
+  &f/tz [場地] radius <起始> [最小] &7設定半徑
+  &f/tz [場地] time <秒數> &7設定時間
+  &f/tz [場地] damage <傷害> [間隔秒數]
+  &f/tz reload &7重載設定和粒子排程
+  &f/tz version &7檢查插件版本
+  &7玩家省略場地時使用自己選取的場地。
+  &7控制台與指令方塊需明確指定場地。
 
-  &e縮圈控制
-  &f/tz start &8/ &fstop &8- &7開始或停止縮圈
-  &f/tz reload &8- &7重新載入設定
-  &f/tz version &8- &7檢查插件版本
-  &8&m--------------------------------
-  &7管理指令需管理權限；版本檢查需版本權限。
-status: "&a世界 {world}，中心 {x}, {z}，目前半徑 {radius}，最小半徑 {minimum}，剩餘 {remaining} 秒，狀態 {state}。"
+status: |-
+  &b場地 {arena} &7｜{state}
+  &7世界 {world}，中心 {x}, {z}
+  &7目前半徑 {radius}，最小 {minimum}
+  &7剩餘 {remaining} 秒
+  &7每 {interval} 秒造成 {damage} 點傷害
+
 state-running: "&a縮圈中"
 state-stopped: "&c未開始"
-started: "&a縮圈已開始。"
-stopped: "&e縮圈已停止。"
-center-set: "&a安全區中心已設為 {world} 的 {x}, {z}。"
+started: "&a已開始場地 {arena} 的縮圈。"
+
+stopped: "&e已停止場地 {arena} 的毒圈。"
+
+center-set: "&a場地 {arena} 中心已設為 {world} ({x}, {z})。"
+
 center-usage: "&c用法：/toxiczone center [世界 x z]（不帶參數時使用你目前的位置）"
-radius-set: "&a半徑已設定：起始 {radius}，最小 {minimum}。"
+radius-set: "&a場地 {arena} 半徑已設定。起始 {start}，最小 {minimum} 格。"
+
 minimum-set: "&a最小安全區半徑已設為 {minimum} 格。"
 radius-usage: "&c用法：/toxiczone radius <起始半徑> [最小半徑]"
-time-set: "&a縮圈時間設為 {seconds} 秒。"
+time-set: "&a場地 {arena} 縮圈時間已設為 {seconds} 秒。"
+
 time-usage: "&c用法：/toxiczone time <秒數>"
-damage-set: "&a毒圈每 {interval} 秒造成 {damage} 點傷害（{hearts} 格紅心）。"
+damage-set: "&a場地 {arena} 每 {interval} 秒造成 {damage} 點傷害（{hearts} 格紅心）。"
+
 damage-usage: "&c用法：/toxiczone damage <傷害值> [間隔秒數]"
-invalid-number: "&c數值無效，請輸入大於零的數字。"
-zone-shrunk: "&c毒圈已縮至半徑 {radius} 格！"
-shrink-complete: "&e安全區已縮至最小範圍 {radius} 格，縮圈結束。"
+invalid-number: "&c數值無效。半徑與時間須大於零，最小半徑須小於或等於起始半徑。"
+
+zone-shrunk: "&e場地 {arena} 已縮至半徑 {radius} 格。"
+
+shrink-complete: "&e場地 {arena} 已縮至最小半徑 {radius} 格，毒圈傷害持續生效。"
+
 update-available: "&e發現新版本 {latest}，目前版本 {current}。"
 up-to-date: "&a目前已是最新版本 {current}。"
 dev-build: "&e目前版本比 GitHub 新（開發版）。"
@@ -44,21 +60,27 @@ version-unavailable: "&c暫時無法取得 GitHub 版本資訊。"
 reload: "&a設定與訊息已重新載入，缺少項目已補齊。"
 wand-name: "&b區域選取釣竿"
 wand-lore: "&7左鍵選第一角，右鍵選第二角。"
-wand-given: "&a已取得區域選取釣竿。左鍵選第一角，右鍵選第二角。"
-selection-first: "&a第一角已設定：{world} ({x}, {y}, {z})。"
+wand-given: "&a已取得場地 {arena} 的選區釣竿。左鍵第一角，右鍵第二角。"
+
+selection-first: "&a場地 {arena} 第一角已設為 {world} ({x}, {y}, {z})。"
+
 selection-second: "&a第二角已設定：{world} ({x}, {y}, {z})。"
 selection-first-needed: "&c請先左鍵方塊設定第一角，再右鍵設定第二角。"
 selection-world-error: "&c兩個選取點必須位於同一個世界，請重新選取。"
-selection-complete: "&a區域已設定：中心 {x}, {z}，起始半徑 {radius} 格。高度座標不影響水平毒圈大小。"
-gui-title: "&8毒圈控制面板：{arena}"
+selection-complete: "&a場地 {arena} 外框已設定，中心 {x}, {z}，起始半徑 {start} 格。"
+
+gui-title: "&8毒圈設定 {arena-short}"
+
 gui-filler.name: "&0 "
 gui-status.name: "&b&l目前狀態"
 gui-status.lore:
-  - "&7世界：{world}"
-  - "&7中心：{x}, {z}"
-  - "&7目前半徑：{radius} 格"
-  - "&7最小半徑：{minimum} 格"
-  - "&7狀態：{state}"
+  - "&7場地 {arena}"
+  - "&7世界 {world}"
+  - "&7中心 {x}, {z}"
+  - "&7半徑 {radius} 格，最小 {minimum} 格"
+  - "&7剩餘 {remaining} 秒"
+  - "&7狀態 {state}"
+
 gui-center.name: "&e設定中心"
 gui-center.lore:
   - "&7將你目前的位置設為中心。"
@@ -105,23 +127,29 @@ gui-start.lore:
   - "&7左鍵開始縮小安全區。"
 gui-stop.name: "&c停止縮圈"
 gui-stop.lore:
-  - "&7左鍵停止並保留目前半徑。"
+  - "&7場地 {arena}"
+  - "&7停止傷害與粒子圓圈。"
+  - "&7未開始時顯示場地外框。"
+
 gui-reload.name: "&e重新載入設定"
 gui-reload.lore:
   - "&7左鍵重新載入設定與訊息。"
 
 arena-list: "&a場地：{arenas}"
 arena-selected: "&a目前設定的場地：{arena}"
-arena-usage: "&e用法：/tz arena list、/tz arena create <名稱> 或 /tz arena use <名稱>。名稱使用小寫英數、底線或減號。"
-arena-running: "&e請先停止縮圈，再變更此場地的範圍或時間。"
-arena-overlap: "&c此場地與正在縮圈的 {arena} 重疊，無法開始。"
+arena-usage: "&e/tz arena create <名稱>、use <名稱>、list、delete <名稱> confirm"
+
+arena-running: "&e場地 {arena} 正在運作，請先停止再調整範圍或時間。"
+
+arena-overlap: "&c場地 {arena} 與其他運作中的場地重疊，無法開始。"
 
 gui-arenas-title: "&8場地清單 {page}/{pages}"
 gui-arenas.name: "&b管理場地"
 gui-arenas.lore:
   - "&7目前場地：{arena}"
   - "&7左鍵開啟清單，建立或切換場地。"
-gui-arena-entry.name: "&b{arena}"
+gui-arena-entry.name: "&b{arena-short}"
+
 gui-arena-entry.lore:
   - "&7世界：{world}"
   - "&7狀態：{state}"
@@ -139,3 +167,39 @@ gui-radius-fine-up.name: "&a起始半徑 +1 格"
 gui-time-fine-down.name: "&c縮圈時間 -10 秒"
 gui-time-fine-up.name: "&a縮圈時間 +10 秒"
 gui-wand-guide: "&7正在設定場地 {arena}。左鍵點第一個角，右鍵點對角。選好後可用 /tz 返回設定。"
+
+arena-required: "&c找不到目標場地。請使用 /tz <場地> <指令>，或先在面板選取場地。"
+
+arena-delete-confirm: "&c確認刪除場地 {arena}，請輸入 /tz arena delete {arena} confirm。"
+
+arena-deleted: "&e場地 {arena} 已刪除，傷害與粒子已停止。"
+
+wand-arena: "&7綁定場地 {arena}"
+
+wand-unbound: "&e這支釣竿尚未綁定有效場地。請在場地面板取得新的釣竿。"
+
+reload-busy: "&e設定正在重新載入，請稍後操作。"
+
+reload-failed: "&c重新載入失敗，請查看主控台。"
+
+pack-hub-missing: "&eHttpHub 尚未啟用，資源包下載服務無法啟動。"
+
+pack-loaded: "&a玩家 {player} 已載入資源包。"
+
+pack-failed: "&c玩家 {player} 資源包載入失敗，狀態 {status}。"
+
+gui-delete-title: "&8確認刪除場地"
+
+gui-delete.name: "&c刪除場地"
+
+gui-delete-confirm.name: "&c確認刪除"
+
+state-final: "&e最終圈，持續傷害"
+
+gui-delete.lore:
+  - "&7目標場地 {arena}"
+  - "&7左鍵進入刪除確認。"
+
+gui-delete-confirm.lore:
+  - "&7目標場地 {arena}"
+  - "&c點選後永久移除此場地。"

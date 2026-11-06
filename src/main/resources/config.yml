@@ -12,7 +12,7 @@ settings:
     view-distance: 64.0
     dust-size: 2.0
     line-spacing: 0.75
-  github-repository: "The-SMP/ToxicZone"
+  github-repository: "catdevteam/ToxicZone"
 arena:
   world: world
   center-x: 0.5

@@ -1,31 +1,44 @@
 package tw.aurora.toxiczone;
 
-import java.util.List;
+import java.util.*;
 import org.bukkit.Bukkit;
-import org.bukkit.inventory.Inventory;
-import org.bukkit.inventory.InventoryHolder;
+import org.bukkit.inventory.*;
 
 public final class ToxicZoneMenuHolder implements InventoryHolder {
-    private final ToxicZonePlugin plugin;
-    private final Inventory inventory;
-    private final int page;
-    private final List<String> arenaEntries;
+  enum View {
+    SETTINGS,
+    LIST,
+    DELETE
+  }
 
-    public ToxicZoneMenuHolder(ToxicZonePlugin plugin, String title) {
-        this(plugin, title, -1, List.of());
-    }
+  final ToxicZonePlugin plugin;
+  final View view;
+  final Arena target;
+  final List<Arena> entries;
+  final int page;
+  private final Inventory inventory;
 
-    ToxicZoneMenuHolder(ToxicZonePlugin plugin, String title, int page, List<String> arenaEntries) {
-        this.plugin = plugin;
-        this.page = page;
-        this.arenaEntries = List.copyOf(arenaEntries);
-        this.inventory = Bukkit.createInventory(this, 45, title);
-    }
+  ToxicZoneMenuHolder(
+      ToxicZonePlugin plugin,
+      View view,
+      Arena target,
+      List<Arena> entries,
+      int page,
+      String title) {
+    this.plugin = plugin;
+    this.view = view;
+    this.target = target;
+    this.entries = List.copyOf(entries);
+    this.page = page;
+    inventory = Bukkit.createInventory(this, 45, title);
+  }
 
-    int page() { return page; }
-    List<String> arenaEntries() { return arenaEntries; }
+  public ToxicZonePlugin getPlugin() {
+    return plugin;
+  }
 
-    public ToxicZonePlugin getPlugin() { return plugin; }
-
-    @Override public Inventory getInventory() { return inventory; }
+  @Override
+  public Inventory getInventory() {
+    return inventory;
+  }
 }
